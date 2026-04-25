@@ -1,0 +1,309 @@
+#!/usr/bin/env python3
+"""NTP telemetry monitor — generates LAN dashboard from ntpq output."""
+
+import json, subprocess, os, re
+from datetime import datetime, timezone
+
+HISTORY_FILE  = '/var/lib/ntp-monitor/history.json'
+OUTPUT_FILE   = '/var/www/html/ntp/index.html'
+MAX_HISTORY   = 1440   # 24h at 1/min
+OFFSET_ALERT  = 100.0  # ms — alert if selected peer offset exceeds this
+JUMP_ALERT    = 50.0   # ms — alert if offset jumps vs recent average
+STRATUM_ALERT = 4      # alert if selected peer stratum >= this
+
+
+def run_ntpq():
+    try:
+        r = subprocess.run(['ntpq', '-p', '-n'], capture_output=True, text=True, timeout=10)
+        return r.stdout
+    except Exception as e:
+        return f"ERROR: {e}"
+
+
+def parse_ntpq(output):
+    peers = []
+    for line in output.splitlines():
+        if not line or line.startswith('=') or 'remote' in line[:20]:
+            continue
+        status = line[0]
+        parts  = line[1:].split()
+        if len(parts) < 9:
+            continue
+        try:
+            peers.append({
+                'status':  status,
+                'remote':  parts[0],
+                'refid':   parts[1],
+                'st':      int(parts[2]),
+                't':       parts[3],
+                'when':    parts[4],
+                'poll':    parts[5],
+                'reach':   parts[6],
+                'delay':   float(parts[7]),
+                'offset':  float(parts[8]),
+                'jitter':  float(parts[9]) if len(parts) > 9 else 0.0,
+            })
+        except (ValueError, IndexError):
+            continue
+    return peers
+
+
+def selected(peers):
+    for p in peers:
+        if p['status'] == '*':
+            return p
+    return None
+
+
+def detect_anomalies(peers, history):
+    alerts = []
+    sel = selected(peers)
+
+    if not sel:
+        alerts.append(('CRIT', 'No system peer selected — clock is NOT synchronised'))
+        return alerts
+
+    if abs(sel['offset']) > OFFSET_ALERT:
+        alerts.append(('WARN', f"Selected peer offset is large: {sel['offset']:+.3f} ms (threshold ±{OFFSET_ALERT} ms)"))
+
+    if sel['st'] >= STRATUM_ALERT:
+        alerts.append(('WARN', f"Selected peer stratum is high: {sel['st']} (expected ≤ {STRATUM_ALERT-1})"))
+
+    good = [p for p in peers if p['status'] in ('*', '+')]
+    if len(good) < 2:
+        alerts.append(('WARN', f"Only {len(good)} usable peer(s) — insufficient redundancy against poisoning"))
+
+    # Sudden offset jump vs recent history
+    if len(history) >= 5:
+        recent = [h['sel_offset'] for h in history[-10:] if h.get('sel_offset') is not None]
+        if len(recent) >= 3:
+            avg = sum(recent) / len(recent)
+            jump = abs(sel['offset'] - avg)
+            if jump > JUMP_ALERT:
+                alerts.append(('CRIT',
+                    f"Sudden offset jump detected: {jump:.1f} ms vs recent avg {avg:+.1f} ms — possible NTP poisoning"))
+
+    # Peer consensus check — large spread across reachable peers
+    reachable = [p for p in peers if p['reach'] not in ('0', '00') and p['st'] < 16]
+    if len(reachable) >= 3:
+        offsets = [p['offset'] for p in reachable]
+        spread = max(offsets) - min(offsets)
+        if spread > 200:
+            alerts.append(('WARN',
+                f"Peers disagree: offset spread = {spread:.1f} ms across {len(reachable)} peers — check for rogue server"))
+
+    return alerts
+
+
+STATUS_META = {
+    '*': ('sys.peer',   '#00e676'),
+    '+': ('candidate',  '#69f0ae'),
+    '-': ('outlier',    '#ffab40'),
+    'x': ('falsetick',  '#ff5252'),
+    '#': ('excess',     '#78909c'),
+    'o': ('pps.peer',   '#40c4ff'),
+    ' ': ('unreach',    '#546e7a'),
+}
+
+
+def reach_pct(reach_str):
+    try:
+        bits = bin(int(reach_str, 8)).count('1')
+        return bits * 100 // 8
+    except:
+        return 0
+
+
+def sparkline_svg(history, width=360, height=48):
+    vals = [h['sel_offset'] for h in history[-120:] if h.get('sel_offset') is not None]
+    if len(vals) < 2:
+        return '<span class="dim">Collecting data — check back in a few minutes</span>'
+    mn, mx = min(vals), max(vals)
+    rng = mx - mn or 0.001
+    pad = 4
+    pts = []
+    for i, v in enumerate(vals):
+        x = pad + int(i / (len(vals) - 1) * (width - 2 * pad))
+        y = pad + int((1 - (v - mn) / rng) * (height - 2 * pad))
+        pts.append(f'{x},{y}')
+    zero_y = pad + int((1 - (0 - mn) / rng) * (height - 2 * pad))
+    zero_y = max(pad, min(height - pad, zero_y))
+    return (
+        f'<svg width="{width}" height="{height}" style="background:#0a0f1e;border-radius:4px;display:block">'
+        f'<line x1="{pad}" y1="{zero_y}" x2="{width-pad}" y2="{zero_y}" '
+        f'stroke="#1e2a3a" stroke-width="1" stroke-dasharray="3,3"/>'
+        f'<polyline points="{" ".join(pts)}" fill="none" stroke="#00e676" stroke-width="1.5" stroke-linejoin="round"/>'
+        f'<text x="{width-pad}" y="{pad+8}" fill="#546e7a" font-size="9" text-anchor="end">{mx:+.1f}</text>'
+        f'<text x="{width-pad}" y="{height-pad}" fill="#546e7a" font-size="9" text-anchor="end">{mn:+.1f}</text>'
+        f'</svg>'
+    )
+
+
+def generate_html(peers, history, alerts, raw):
+    now  = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+    sel  = selected(peers)
+
+    # Alert banner
+    if alerts:
+        items = ''.join(
+            f'<li class="{"crit" if sev=="CRIT" else "warn"}">'
+            f'{"🔴" if sev=="CRIT" else "🟡"} {msg}</li>'
+            for sev, msg in alerts
+        )
+        alert_html = f'<ul class="alerts">{items}</ul>'
+    else:
+        alert_html = '<div class="ok">🟢 No anomalies detected — all peers look healthy</div>'
+
+    # Selected peer bar
+    sel_html = ''
+    if sel:
+        oc = '#ff5252' if abs(sel['offset']) > OFFSET_ALERT else '#00e676'
+        sel_html = f'''<div class="selbar">
+            <span class="sl">System peer</span>
+            <code>{sel["remote"]}</code>
+            <span class="sl">refid</span><code>{sel["refid"]}</code>
+            <span class="sl">stratum</span><b>{sel["st"]}</b>
+            <span class="sl">offset</span><b style="color:{oc}">{sel["offset"]:+.3f} ms</b>
+            <span class="sl">jitter</span><b>{sel["jitter"]:.3f} ms</b>
+        </div>'''
+
+    # Peer table rows
+    rows = ''
+    for p in peers:
+        label, color = STATUS_META.get(p['status'], (p['status'], '#90a4ae'))
+        rp   = reach_pct(p['reach'])
+        rbar = f'<div class="rb" style="width:{rp}%"></div>'
+        oc   = '#ff5252' if abs(p['offset']) > OFFSET_ALERT else '#cdd6f4'
+        rows += (
+            f'<tr><td><span style="color:{color}">{label}</span></td>'
+            f'<td class="mono">{p["remote"]}</td>'
+            f'<td class="mono dim">{p["refid"]}</td>'
+            f'<td>{p["st"]}</td>'
+            f'<td><div class="rbwrap">{rbar}</div><span class="dim">{rp}%</span></td>'
+            f'<td class="r">{p["delay"]:.3f}</td>'
+            f'<td class="r" style="color:{oc}">{p["offset"]:+.3f}</td>'
+            f'<td class="r dim">{p["jitter"]:.3f}</td></tr>'
+        )
+
+    # Stats from history
+    stats_html = ''
+    if len(history) >= 5:
+        recent_off = [h['sel_offset'] for h in history[-60:] if h.get('sel_offset') is not None]
+        if recent_off:
+            avg = sum(recent_off) / len(recent_off)
+            mx  = max(recent_off)
+            mn  = min(recent_off)
+            stats_html = (
+                f'<div class="stats">'
+                f'<span>1h avg <b>{avg:+.2f} ms</b></span>'
+                f'<span>max <b>{mx:+.2f}</b></span>'
+                f'<span>min <b>{mn:+.2f}</b></span>'
+                f'<span>samples <b>{len(history)}</b> / 1440</span>'
+                f'</div>'
+            )
+
+    spark = sparkline_svg(history)
+
+    return f'''<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="60">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NTP Monitor — rpi4</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0d1117;color:#cdd6f4;font:13px/1.6 'Courier New',monospace;padding:24px;max-width:960px}}
+h1{{color:#00e676;font-size:1.3em;letter-spacing:.05em}}
+.sub{{color:#546e7a;font-size:.8em;margin-bottom:18px}}
+.alerts{{list-style:none;margin-bottom:14px;border-radius:4px;overflow:hidden}}
+.alerts li{{padding:8px 14px;border-left:3px solid}}
+.alerts li.crit{{background:#1a0008;border-color:#ff5252;color:#ff8a80}}
+.alerts li.warn{{background:#1a1000;border-color:#ffab40;color:#ffd180}}
+.ok{{background:#001a08;border-left:3px solid #00e676;padding:8px 14px;border-radius:4px;color:#69f0ae;margin-bottom:14px}}
+.selbar{{background:#0f1923;border-radius:4px;padding:8px 14px;margin-bottom:14px;display:flex;gap:14px;flex-wrap:wrap;align-items:center}}
+.sl{{color:#546e7a;font-size:.8em}}
+code{{color:#64ffda}}
+b{{color:#cdd6f4}}
+table{{width:100%;border-collapse:collapse;margin-bottom:16px}}
+th{{color:#546e7a;font-weight:normal;text-align:left;padding:4px 8px;border-bottom:1px solid #1e2a3a;font-size:.8em}}
+td{{padding:5px 8px;border-bottom:1px solid #0d1520}}
+tr:hover td{{background:#0f1923}}
+.mono{{font-family:'Courier New',monospace}}
+.dim{{color:#546e7a}}
+.r{{text-align:right}}
+.rbwrap{{display:inline-block;width:60px;height:5px;background:#1e2a3a;border-radius:3px;vertical-align:middle;margin-right:4px}}
+.rb{{background:#00e676;height:5px;border-radius:3px}}
+.graph{{margin-bottom:16px}}
+.graph h3{{color:#546e7a;font-size:.8em;font-weight:normal;margin-bottom:6px}}
+.stats{{display:flex;gap:20px;color:#546e7a;font-size:.8em;margin-top:6px}}
+.stats b{{color:#cdd6f4}}
+details summary{{color:#546e7a;cursor:pointer;font-size:.8em;margin-bottom:6px}}
+.raw{{background:#090e18;border:1px solid #1e2a3a;border-radius:4px;padding:12px;font-size:.75em;color:#546e7a;white-space:pre;overflow-x:auto}}
+.footer{{color:#1e2a3a;font-size:.7em;margin-top:20px}}
+</style></head><body>
+<h1>⏱ NTP Telemetry Monitor</h1>
+<div class="sub">rpi4 &nbsp;·&nbsp; {now} &nbsp;·&nbsp; auto-refresh 60 s</div>
+{alert_html}
+{sel_html}
+<table>
+<thead><tr>
+  <th>Status</th><th>Remote peer</th><th>RefID</th><th>St</th>
+  <th>Reach</th><th class="r">Delay ms</th><th class="r">Offset ms</th><th class="r dim">Jitter ms</th>
+</tr></thead>
+<tbody>{rows}</tbody>
+</table>
+<div class="graph">
+  <h3>Selected peer offset — last 120 samples (ms, 1 min/sample)</h3>
+  {spark}
+  {stats_html}
+</div>
+<details>
+  <summary>▸ Raw ntpq -p -n output</summary>
+  <div class="raw">{raw}</div>
+</details>
+<div class="footer">rpi4 · ntp-monitor v1.0 · history stored at /var/lib/ntp-monitor/history.json</div>
+</body></html>'''
+
+
+def main():
+    os.makedirs(os.path.dirname(HISTORY_FILE), exist_ok=True)
+    os.makedirs(os.path.dirname(OUTPUT_FILE),  exist_ok=True)
+
+    history = []
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE) as f:
+                history = json.load(f)
+        except Exception:
+            history = []
+
+    raw   = run_ntpq()
+    peers = parse_ntpq(raw)
+    sel   = selected(peers)
+
+    history.append({
+        'ts':          datetime.now(timezone.utc).isoformat(),
+        'peer_count':  len(peers),
+        'good_count':  sum(1 for p in peers if p['status'] in ('*', '+')),
+        'sel_remote':  sel['remote']  if sel else None,
+        'sel_offset':  sel['offset']  if sel else None,
+        'sel_st':      sel['st']      if sel else None,
+        'sel_jitter':  sel['jitter']  if sel else None,
+    })
+    history = history[-MAX_HISTORY:]
+
+    with open(HISTORY_FILE, 'w') as f:
+        json.dump(history, f)
+
+    alerts = detect_anomalies(peers, history)
+    html   = generate_html(peers, history, alerts, raw)
+
+    import shutil
+    with open(OUTPUT_FILE, "w") as f:
+        f.write(html)
+
+
+if __name__ == '__main__':
+    main()
+
+# (ownership fix appended by setup)
