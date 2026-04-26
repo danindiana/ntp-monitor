@@ -467,7 +467,16 @@ resp = s.recv(1024)
 The most useful keys for relay health: `status/reachability-succeeded/or` (0/1),
 `net/listeners/or`, `fingerprint`, `address`.
 
-### 9. Hairpin NAT is a cheap external port-check
+### 9. AT&T ARRIS NAT/Gaming is a two-step process
+
+"Custom Services" on the ARRIS gateway only *defines* a named port range — it does
+not route traffic. You must also go to **NAT/Gaming → Hosted Applications** and
+*assign* each custom service to the target device. Defining without assigning
+does nothing and the ports stay closed. After assigning, a `systemctl reload`
+does not re-trigger Tor's self-test; use `systemctl restart tor@default` to force
+a fresh probe.
+
+### 10. Hairpin NAT is a cheap external port-check
 
 To test whether a port is open from outside without needing an external host, connect from the LAN machine to its own external IP. If the router supports hairpin NAT (most do), you get a real probe result. `errno=0` → open; `errno=111` (ECONNREFUSED) → not forwarded; `errno=110` (ETIMEDOUT) → silently dropped.
 

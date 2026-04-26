@@ -29,7 +29,7 @@ Enter the Access Code when prompted.
 
 ---
 
-## Step 3 — Navigate to port forwarding
+## Step 3 — Navigate to NAT/Gaming
 
 ```
 Home → Firewall → NAT/Gaming
@@ -41,48 +41,73 @@ Home → Firewall → NAT/Gaming
 
 ---
 
-## Step 4 — Add the two rules
+## Step 4 — Define the services (Custom Services)
 
-Click **"Add a new user-defined application"** or **"Custom Services"**.
+> ⚠ **AT&T two-step trap:** The router separates *defining* a service from
+> *assigning* it to a host. Both steps are required. Defining without assigning
+> does nothing.
 
-### Rule 1 — Tor ORPort
+### Step 4a — Define in Custom Services
 
-| Field | Value |
-|-------|-------|
-| Application name | `Tor-ORPort` |
-| Protocol | TCP |
-| External port | 9001 |
-| Internal port | 9001 |
-| Internal IP address | `192.168.1.165` |
+In the NAT/Gaming page, click **"Custom Services"** and add two entries:
 
-Click **Add** (or **Save**).
+| Name | Global Port Range | Protocol | Host Port |
+|------|-------------------|----------|-----------|
+| `tor-orport` | 9001 – 9001 | TCP | 9001 |
+| `tor-dirport` | 9030 – 9030 | TCP | 9030 |
 
-### Rule 2 — Tor DirPort
+The resulting Service List should show:
 
-| Field | Value |
-|-------|-------|
-| Application name | `Tor-DirPort` |
-| Protocol | TCP |
-| External port | 9030 |
-| Internal port | 9030 |
-| Internal IP address | `192.168.1.165` |
+```
+Name          Global Port Range   Protocol   Host Port
+tor-orport    9001 - 9001         TCP        9001
+tor-dirport   9030 - 9030         TCP        9030
+```
 
-Click **Add** (or **Save**).
+### Step 4b — Assign to rpi4 (Hosted Applications)
 
-Then click **Apply** or **Save Settings** to commit both rules.
+Go back to **NAT/Gaming → Hosted Applications**. For each service:
+
+1. Select **rpi4** (`192.168.1.165`) from the device dropdown
+2. Select `tor-orport` from the service list → click **Add**
+3. Select `tor-dirport` from the service list → click **Add**
+
+The **Hosted Applications** table should then show:
+
+```
+Service        Ports       Device
+tor-dirport    TCP: 9030   rpi4
+tor-orport     TCP: 9001   rpi4
+```
+
+Click **Save / Apply**.
 
 ---
 
 ## Step 5 — Verify from rpi4
 
-SSH into rpi4 and run the health-check script:
+First, check the ports are open and then restart Tor to trigger a fresh self-test
+(a `reload` resets config but does not re-probe; a full `restart` does):
 
 ```bash
+# Confirm ports open
 ssh rpi4 sudo tor-relay-verify
+
+# Trigger fresh self-test
+ssh rpi4 sudo systemctl restart tor@default
+
+# Watch for the result (appears within ~30 seconds if forward is working)
+ssh rpi4 sudo journalctl -u tor@default -f --no-pager
 ```
 
-Within 20 minutes of saving the router rules Tor will self-test. A successful
-result looks like this:
+A successful result in the journal looks like:
+
+```
+Self-testing indicates your ORPort 69.212.112.252:9001 is reachable from the outside. Excellent.
+Self-testing indicates your ORPort [2600:1700:269:450::44]:9001 is reachable from the outside. Excellent. Publishing server descriptor.
+```
+
+And `tor-relay-verify` output:
 
 ```
 Port reachability (hairpin probe via external IP):
@@ -91,15 +116,6 @@ Port reachability (hairpin probe via external IP):
 
 Tor control port:
   reachability-succeeded/or          : 1
-  ...
-
-Recent reachability log:
-  Self-testing indicates your ORPort 69.212.112.252:9001 is reachable
-  from the outside. Excellent.
-
-Tor network visibility (onionoo):
-  NOT in consensus yet
-  → allow ~1hr to propagate
 ```
 
 The relay appears in the Tor consensus about **1 hour** after the self-test passes.
