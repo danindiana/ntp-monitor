@@ -398,6 +398,8 @@ directive eliminates Tor's startup delay from external IP auto-detection.
 
 ### Remaining manual step — router
 
+Full instructions: **[att-router-portfwd.md](att-router-portfwd.md)**
+
 Log into **http://192.168.1.254** with the Access Code on the router label and add:
 
 | Name | Protocol | Ext Port | Internal IP | Int Port |

@@ -258,42 +258,26 @@ sudo journalctl -u tor-relay-verify --no-pager
 
 ## Router Port Forward — Manual Step
 
-The ARRIS gateway has no API. This is a one-time manual config:
+Full step-by-step instructions: **[att-router-portfwd.md](att-router-portfwd.md)**
 
-1. Open **http://192.168.1.254** in a browser
-2. Log in with the **Access Code** on the router label (bottom/back of device)
-3. Navigate to **Firewall → NAT/Gaming** (exact path varies by firmware)
-4. Add two rules:
+Quick summary — log into `http://192.168.1.254` with the Access Code on the
+router label, navigate to **Firewall → NAT/Gaming**, and add:
 
 | Name | Protocol | External Port | Internal IP | Internal Port |
 |------|----------|---------------|-------------|---------------|
 | Tor-ORPort | TCP | 9001 | 192.168.1.165 | 9001 |
 | Tor-DirPort | TCP | 9030 | 192.168.1.165 | 9030 |
 
-5. Save and apply.
-
-**Verification (within 20 minutes of saving):**
-
-```bash
-sudo tor-relay-verify
-```
-
-Expected output after a successful port forward:
+Save and apply. Within 20 minutes run `sudo tor-relay-verify` on rpi4 — expected output:
 
 ```
-Port reachability (hairpin probe via external IP):
-  TCP 9001 (ORPort): OPEN
-  TCP 9030 (DirPort): OPEN
-
-Tor control port:
-  reachability-succeeded/or          : 1
-
-Recent reachability log:
-  Self-testing indicates your ORPort 69.212.112.252:9001 is reachable
-  from the outside. Excellent.
+TCP 9001 (ORPort): OPEN
+TCP 9030 (DirPort): OPEN
+reachability-succeeded/or : 1
+Self-testing indicates your ORPort 69.212.112.252:9001 is reachable. Excellent.
 ```
 
-The relay will appear in the Tor consensus (onionoo) within ~1 hour of the self-test passing.
+Relay appears in Tor consensus ~1 hour after the self-test passes.
 
 ---
 
