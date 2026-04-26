@@ -60,8 +60,7 @@ ContactInfo 0xGRANIT granittwosilo AT gmail DOT com
 ORPort 9001
 DirPort 9030
 
-RelayBandwidthRate 1 MB
-RelayBandwidthBurst 2 MB
+# No RelayBandwidthRate/Burst set — unlimited (host runs 24/7)
 
 ExitPolicy reject *:*
 ExitRelay 0
