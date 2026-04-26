@@ -1,0 +1,185 @@
+digraph network_topology {
+    graph [
+        bgcolor="#0d0d0d"
+        fontname="Courier New"
+        fontcolor="#ffffff"
+        label="warlockrpi4 — Network Topology & IPv4 NAT Problem"
+        labelloc=t
+        fontsize=17
+        pad=0.8
+        splines=polyline
+        rankdir=LR
+        nodesep=0.9
+        ranksep=1.6
+    ]
+    node [
+        fontname="Courier New"
+        fontcolor="#ffffff"
+        style="filled,rounded"
+        penwidth=2.5
+    ]
+    edge [
+        fontname="Courier New"
+        fontcolor="#cccccc"
+        fontsize=10
+        penwidth=2
+    ]
+
+    // ── Internet ──────────────────────────────────────────────
+    internet [
+        label="INTERNET\n(Tor Network)"
+        shape=doubleoctagon
+        fillcolor="#0a1628"
+        color="#00ffff"
+        fontcolor="#00ffff"
+        fontsize=13
+        width=2.2
+    ]
+
+    // ── ARRIS Router ──────────────────────────────────────────
+    subgraph cluster_router {
+        bgcolor="#12060a"
+        color="#ff00ff"
+        penwidth=2.5
+        label="ARRIS Gateway\n192.168.1.254  |  WAN: 69.212.112.252"
+        fontcolor="#ff00ff"
+        fontsize=12
+
+        nat4 [
+            label="NAT IPv4\n⚠ NO FORWARD RULE\nTCP 9001 / 9030"
+            shape=hexagon
+            fillcolor="#2a0808"
+            color="#ff3300"
+            fontcolor="#ff4444"
+            fontsize=11
+            width=2.4
+        ]
+        nat6 [
+            label="IPv6\nNative Route\n✓ No NAT"
+            shape=hexagon
+            fillcolor="#08200a"
+            color="#39ff14"
+            fontcolor="#39ff14"
+            fontsize=11
+            width=2.4
+        ]
+        fix [
+            label="FIX NEEDED\nFirewall → NAT/Gaming\nTCP 9001 → 192.168.1.165\nTCP 9030 → 192.168.1.165"
+            shape=note
+            fillcolor="#1a1800"
+            color="#ffff00"
+            fontcolor="#ffff00"
+            fontsize=10
+            width=2.6
+        ]
+    }
+
+    // ── RPi4 ──────────────────────────────────────────────────
+    subgraph cluster_rpi4 {
+        bgcolor="#060a1a"
+        color="#00ffff"
+        penwidth=2.5
+        label="rpi4 — 192.168.1.165 (static NM)\nDebian Trixie aarch64"
+        fontcolor="#00ffff"
+        fontsize=12
+
+        ufw [
+            label="UFW Firewall\n9001/tcp ALLOW world\n9030/tcp ALLOW world\n22/tcp   LAN only"
+            shape=rectangle
+            fillcolor="#0a1228"
+            color="#00aaff"
+            fontsize=10
+        ]
+        tor [
+            label="tor@default\nwarlockrpi4\nFP: 88D420...09C"
+            shape=rectangle
+            fillcolor="#0a1228"
+            color="#39ff14"
+            fontsize=11
+        ]
+        orport [
+            label="ORPort :9001\n0.0.0.0 + [::]"
+            shape=oval
+            fillcolor="#0a1228"
+            color="#ffff00"
+            fontcolor="#ffff00"
+            fontsize=11
+        ]
+        dirport [
+            label="DirPort :9030"
+            shape=oval
+            fillcolor="#0a1228"
+            color="#ff9900"
+            fontcolor="#ff9900"
+            fontsize=11
+        ]
+    }
+
+    // ── worlock ───────────────────────────────────────────────
+    worlock [
+        label="worlock\n192.168.1.135\nnyx-rpi4 / ssh rpi4"
+        shape=rectangle
+        fillcolor="#180a22"
+        color="#ff00ff"
+        fontsize=12
+        width=2.0
+    ]
+
+    // ── IPv4 path (blocked) ───────────────────────────────────
+    internet -> nat4 [
+        xlabel="TCP 9001/9030\ninbound"
+        color="#ff3300"
+        style=dashed
+        dir=both
+        penwidth=2
+    ]
+    nat4 -> orport [
+        xlabel="⚠ BLOCKED"
+        color="#ff3300"
+        style=dashed
+        penwidth=2
+    ]
+    nat4 -> fix [
+        color="#ffff00"
+        style=dotted
+        arrowhead=none
+        penwidth=1.5
+    ]
+
+    // ── IPv6 path (working) ───────────────────────────────────
+    internet -> nat6 [
+        xlabel="TCP 9001 IPv6\n✓ native"
+        color="#39ff14"
+        penwidth=2.5
+        dir=both
+    ]
+    nat6 -> orport [
+        xlabel="✓ direct"
+        color="#39ff14"
+        penwidth=2.5
+    ]
+
+    // ── LAN ───────────────────────────────────────────────────
+    worlock -> ufw [
+        xlabel="SSH :22"
+        color="#00aaff"
+        style=dashed
+    ]
+    ufw -> tor   [color="#00aaff" style=invis]
+    tor -> orport [color="#ffff00" penwidth=1.5]
+    tor -> dirport [color="#ff9900" penwidth=1.5]
+
+    // ── Outbound ──────────────────────────────────────────────
+    orport -> internet [
+        xlabel="Tor circuits\noutbound"
+        color="#00ffff"
+        style=dotted
+        penwidth=1.5
+    ]
+    dirport -> internet [
+        xlabel="Dir updates"
+        color="#ff9900"
+        style=dotted
+        penwidth=1.5
+    ]
+}

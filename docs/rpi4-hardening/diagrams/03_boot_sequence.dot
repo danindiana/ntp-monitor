@@ -1,0 +1,224 @@
+digraph boot_sequence {
+    graph [
+        bgcolor="#0d0d0d"
+        fontname="Courier New"
+        fontcolor="#ffffff"
+        label="warlockrpi4 — Boot Sequence & systemd Service Dependencies"
+        labelloc=t
+        fontsize=17
+        pad=0.8
+        splines=polyline
+        rankdir=TB
+        nodesep=0.7
+        ranksep=0.75
+    ]
+    node [
+        fontname="Courier New"
+        fontcolor="#ffffff"
+        style="filled,rounded"
+        penwidth=2
+        width=2.8
+    ]
+    edge [
+        fontname="Courier New"
+        fontsize=10
+        penwidth=2
+    ]
+
+    // ── T+0: kernel ───────────────────────────────────────────
+    kernel [
+        label="kernel + initrd\nT+0s"
+        shape=rectangle
+        fillcolor="#14082e"
+        color="#9944ff"
+        fontsize=12
+        width=2.4
+    ]
+
+    // ── T+5s: early services ─────────────────────────────────
+    subgraph cluster_early {
+        bgcolor="#080812"
+        color="#334466"
+        penwidth=1.2
+        label="sysinit.target  ·  T+5s"
+        fontcolor="#556688"
+        fontsize=10
+
+        fakehwclock [
+            label="fake-hwclock-load\nrestores saved time\n(coarse, ±minutes)"
+            shape=rectangle
+            fillcolor="#12102a"
+            color="#8844ff"
+            fontsize=10
+        ]
+        tmpfiles [
+            label="systemd-tmpfiles\ncreates /var/log/tor/\n← Bug #1 fix"
+            shape=rectangle
+            fillcolor="#12102a"
+            color="#00aaff"
+            fontsize=10
+        ]
+        nm [
+            label="NetworkManager\neth0 → 192.168.1.165\nstatic · valid_lft forever"
+            shape=rectangle
+            fillcolor="#12102a"
+            color="#00ffff"
+            fontsize=10
+        ]
+    }
+
+    // ── T+25s: clock sync ────────────────────────────────────
+    subgraph cluster_ntp {
+        bgcolor="#06120a"
+        color="#226622"
+        penwidth=1.2
+        label="NTP sync  ·  T+25s"
+        fontcolor="#448844"
+        fontsize=10
+
+        ntpsec [
+            label="ntpsec.service\npeer: time servers"
+            shape=rectangle
+            fillcolor="#0a1a0a"
+            color="#66cc22"
+            fontsize=10
+        ]
+        ntpsec_wait [
+            label="ntpsec-wait.service\nntpwait -s 1 -n 30000\npolls until synced ✓"
+            shape=rectangle
+            fillcolor="#0a1a0a"
+            color="#aaff44"
+            fontsize=10
+        ]
+        time_sync [
+            label="time-sync.target\n★ gates Tor startup\nT+25s (fake-hwclock helps)"
+            shape=octagon
+            fillcolor="#0f2a10"
+            color="#00ff88"
+            fontcolor="#00ff88"
+            fontsize=12
+            width=3.2
+        ]
+    }
+
+    // ── T+28s: Tor ────────────────────────────────────────────
+    subgraph cluster_tor {
+        bgcolor="#06100e"
+        color="#227722"
+        penwidth=1.2
+        label="Tor  ·  T+28s"
+        fontcolor="#448844"
+        fontsize=10
+
+        tor_svc [
+            label="tor.service\nmaster · triggers generator"
+            shape=rectangle
+            fillcolor="#0a1a0a"
+            color="#6666ff"
+            fontsize=10
+        ]
+        tor_default [
+            label="tor@default.service\n/usr/bin/tor  PID 881\nT+28s"
+            shape=rectangle
+            fillcolor="#0a1a0a"
+            color="#00ffff"
+            fontcolor="#00ffff"
+            fontsize=12
+            width=3.2
+        ]
+        bootstrap [
+            label="Bootstrap 100%  T+43s\ncircuits established\nno clock-skew WARNs ✓"
+            shape=rectangle
+            fillcolor="#0a1a0a"
+            color="#39ff14"
+            fontcolor="#39ff14"
+            fontsize=11
+            width=3.2
+        ]
+    }
+
+    // ── Self-test ─────────────────────────────────────────────
+    reachability [
+        label="IPv4 ORPort self-test\n69.212.112.252:9001\n(up to 20 min)"
+        shape=diamond
+        fillcolor="#1a1400"
+        color="#ffff00"
+        fontcolor="#ffff00"
+        fontsize=11
+        width=3.4
+    ]
+
+    pass [
+        label="✓ REACHABLE\ndescriptor published\nappears in consensus"
+        shape=rectangle
+        fillcolor="#0a2a0a"
+        color="#39ff14"
+        fontcolor="#39ff14"
+        fontsize=11
+        width=2.6
+    ]
+    fail [
+        label="✗ UNREACHABLE\nset router port forward\nTCP 9001+9030 → .165"
+        shape=rectangle
+        fillcolor="#2a0808"
+        color="#ff3300"
+        fontcolor="#ff4444"
+        fontsize=11
+        width=2.6
+    ]
+
+    // ── Boot verify ───────────────────────────────────────────
+    subgraph cluster_verify {
+        bgcolor="#120800"
+        color="#884422"
+        penwidth=1.2
+        label="Boot verification  ·  T+5min"
+        fontcolor="#aa6633"
+        fontsize=10
+
+        verify_wait [
+            label="tor-relay-verify.service\nExecStartPre: sleep 300"
+            shape=rectangle
+            fillcolor="#1a0a00"
+            color="#ff6600"
+            fontsize=10
+        ]
+        verify_run [
+            label="tor-relay-verify\nport probe · ctrl port\nonionoo → journald"
+            shape=rectangle
+            fillcolor="#1a0a00"
+            color="#ff9900"
+            fontcolor="#ff9900"
+            fontsize=11
+        ]
+    }
+
+    // ── Edges ─────────────────────────────────────────────────
+    kernel -> fakehwclock [color="#8844ff"]
+    kernel -> tmpfiles    [color="#00aaff"]
+    kernel -> nm          [color="#00ffff"]
+
+    fakehwclock -> ntpsec [color="#66cc22" xlabel="clock ≈ real"]
+    nm          -> ntpsec [color="#00ffff"  xlabel="network up"]
+    ntpsec      -> ntpsec_wait [color="#aaff44"]
+    ntpsec_wait -> time_sync   [color="#00ff88" xlabel="synced ✓"]
+
+    tmpfiles -> tor_svc [color="#00aaff" xlabel="/var/log/tor/ exists"]
+
+    time_sync -> tor_svc [
+        color="#ff00ff"
+        style=dashed
+        xlabel="unblocks\n(After=)"
+        penwidth=2.5
+    ]
+    tor_svc -> tor_default [color="#6666ff" xlabel="spawns via\ntor-generator"]
+
+    tor_default -> bootstrap    [color="#39ff14"]
+    bootstrap   -> reachability [color="#ffff00" xlabel="self-test begins"]
+    bootstrap   -> verify_wait  [color="#ff6600" style=dashed xlabel="After= + sleep 300"]
+
+    reachability -> pass [color="#39ff14" xlabel="open"]
+    reachability -> fail [color="#ff3300" xlabel="closed"]
+
+    verify_wait -> verify_run [color="#ff9900"]
+}

@@ -4,6 +4,17 @@
 **Session:** `2026-04-26_020703_tor-relay-portfwd`  
 **Symptom:** Relay `warlockrpi4` not publishing descriptors; IPv4 ORPort unreachable
 
+## Diagrams
+
+| | |
+|---|---|
+| ![Network topology](diagrams/01_network_topology.png) | ![Tor service architecture](diagrams/02_tor_service_arch.png) |
+| **Network Topology** — ARRIS NAT, IPv4/IPv6 paths | **Service Architecture** — systemd units, ports, monitoring |
+| ![Boot sequence](diagrams/03_boot_sequence.png) | ![Verify flow](diagrams/04_verify_flow.png) |
+| **Boot Sequence** — clock sync gates Tor startup | **tor-relay-verify** — script logic flow |
+
+> Source `.dot` files: [`diagrams/`](diagrams/)
+
 ---
 
 ## Diagnosis

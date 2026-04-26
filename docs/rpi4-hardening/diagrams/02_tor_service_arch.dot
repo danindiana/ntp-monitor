@@ -1,0 +1,206 @@
+digraph tor_service_arch {
+    graph [
+        bgcolor="#0d0d0d"
+        fontname="Courier New"
+        fontcolor="#ffffff"
+        label="warlockrpi4 — Tor Relay Service Architecture"
+        labelloc=t
+        fontsize=17
+        pad=0.7
+        splines=curved
+        rankdir=LR
+        nodesep=0.6
+        ranksep=1.1
+    ]
+    node [
+        fontname="Courier New"
+        fontcolor="#ffffff"
+        style="filled,rounded"
+        penwidth=2
+    ]
+    edge [
+        fontname="Courier New"
+        fontcolor="#aaaaaa"
+        fontsize=10
+        penwidth=1.8
+    ]
+
+    // ── systemd ───────────────────────────────────────────────
+    subgraph cluster_systemd {
+        bgcolor="#080810"
+        color="#444466"
+        penwidth=1.5
+        label="systemd"
+        fontcolor="#777788"
+        fontsize=11
+
+        time_sync [
+            label="time-sync.target\ngates Tor start\n(clock must be good)"
+            shape=octagon
+            fillcolor="#14082a"
+            color="#ff00ff"
+            fontcolor="#ff88ff"
+            fontsize=10
+        ]
+        tor_svc [
+            label="tor.service\nmaster · /bin/true\nenabled at boot"
+            shape=rectangle
+            fillcolor="#10102a"
+            color="#6666ff"
+            fontsize=10
+        ]
+        tor_gen [
+            label="tor-generator\nsystem-generators/"
+            shape=rectangle
+            fillcolor="#10102a"
+            color="#9966ff"
+            fontsize=10
+        ]
+        tor_default [
+            label="tor@default.service\nactual daemon\nenabled-runtime"
+            shape=rectangle
+            fillcolor="#10102a"
+            color="#00ffff"
+            fontcolor="#00ffff"
+            fontsize=11
+            width=2.4
+        ]
+        verify_svc [
+            label="tor-relay-verify.service\noneshot · +5 min\nenabled at boot"
+            shape=rectangle
+            fillcolor="#10102a"
+            color="#ff9900"
+            fontsize=10
+        ]
+    }
+
+    // ── Tor process ───────────────────────────────────────────
+    subgraph cluster_tor {
+        bgcolor="#06120a"
+        color="#39ff14"
+        penwidth=2
+        label="/usr/bin/tor"
+        fontcolor="#39ff14"
+        fontsize=12
+
+        torrc [
+            label="/etc/tor/torrc\nAddress 69.212.112.252\nORPort 9001\nDirPort 9030\nControlPort 9051"
+            shape=note
+            fillcolor="#081a0a"
+            color="#39ff14"
+            fontsize=10
+            width=2.6
+        ]
+        orport [
+            label="ORPort\n0.0.0.0:9001\n[::]:9001"
+            shape=oval
+            fillcolor="#081a0a"
+            color="#ffff00"
+            fontcolor="#ffff00"
+            fontsize=11
+        ]
+        dirport [
+            label="DirPort\n:9030"
+            shape=oval
+            fillcolor="#081a0a"
+            color="#ff9900"
+            fontcolor="#ff9900"
+            fontsize=11
+        ]
+        ctrlport [
+            label="ControlPort\n127.0.0.1:9051"
+            shape=oval
+            fillcolor="#081a0a"
+            color="#ff00ff"
+            fontcolor="#ff88ff"
+            fontsize=11
+        ]
+        keys [
+            label="/var/lib/tor/keys/\nRSA: 88D420...09C\nEd25519: P+gNQ4..."
+            shape=folder
+            fillcolor="#081a0a"
+            color="#00aaff"
+            fontsize=10
+        ]
+        logfile [
+            label="/var/log/tor/notices.log\n+ syslog / journald"
+            shape=note
+            fillcolor="#081a0a"
+            color="#666666"
+            fontsize=10
+        ]
+    }
+
+    // ── Tools ─────────────────────────────────────────────────
+    subgraph cluster_tools {
+        bgcolor="#12060e"
+        color="#ff69b4"
+        penwidth=1.5
+        label="Monitoring"
+        fontcolor="#ff69b4"
+        fontsize=11
+
+        nyx [
+            label="nyx\ncurses TUI\n~/.nyx/config"
+            shape=rectangle
+            fillcolor="#200a14"
+            color="#ff69b4"
+            fontsize=11
+        ]
+        verify_script [
+            label="tor-relay-verify\n/usr/local/bin/\n① IP check\n② port probe\n③ control port\n④ log grep\n⑤ onionoo"
+            shape=rectangle
+            fillcolor="#200a14"
+            color="#ff9900"
+            fontsize=10
+            width=2.0
+        ]
+    }
+
+    // ── External ──────────────────────────────────────────────
+    tor_net [
+        label="Tor Network\nguard / middle / exit\ndirectory authorities"
+        shape=doubleoctagon
+        fillcolor="#0a1628"
+        color="#00ffff"
+        fontcolor="#00ffff"
+        fontsize=11
+        width=2.2
+    ]
+    onionoo [
+        label="onionoo API\ntorproject.org\nconsensus check"
+        shape=rectangle
+        fillcolor="#0a1628"
+        color="#4488ff"
+        fontsize=10
+    ]
+    ipify [
+        label="api.ipify.org\nexternal IP\nlookup"
+        shape=rectangle
+        fillcolor="#0a1628"
+        color="#4488ff"
+        fontsize=10
+    ]
+
+    // ── Edges ─────────────────────────────────────────────────
+    time_sync   -> tor_svc     [xlabel="unblocks" color="#ff00ff" style=dashed]
+    tor_svc     -> tor_gen     [xlabel="triggers" color="#9966ff"]
+    tor_gen     -> tor_default [xlabel="creates" color="#9966ff"]
+    tor_default -> verify_svc  [xlabel="After=\n+300s" color="#ff9900" style=dashed]
+
+    tor_default -> torrc    [xlabel="reads" color="#39ff14"]
+    torrc       -> orport   [color="#ffff00"]
+    torrc       -> dirport  [color="#ff9900"]
+    torrc       -> ctrlport [color="#ff88ff"]
+    tor_default -> keys     [xlabel="identity" color="#00aaff"]
+    tor_default -> logfile  [xlabel="writes" color="#666666"]
+
+    orport  -> tor_net [xlabel="OR traffic\ncircuits" color="#00ffff"]
+    dirport -> tor_net [xlabel="dir updates" color="#ff9900" style=dashed]
+
+    nyx            -> ctrlport      [xlabel="GETINFO" color="#ff69b4"]
+    verify_script  -> ctrlport      [xlabel="reachability\nquery" color="#ff9900"]
+    verify_script  -> onionoo       [xlabel="consensus" color="#4488ff" style=dashed]
+    verify_script  -> logfile       [xlabel="grep" color="#666666" style=dashed]
+    verify_script  -> ipify         [xlabel="IP check" color="#4488ff" style=dashed]
+}

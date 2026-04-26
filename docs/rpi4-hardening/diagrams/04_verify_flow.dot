@@ -1,0 +1,245 @@
+digraph verify_flow {
+    graph [
+        bgcolor="#0d0d0d"
+        fontname="Courier New"
+        fontcolor="#ffffff"
+        label="tor-relay-verify — Script Logic Flow"
+        labelloc=t
+        fontsize=17
+        pad=0.8
+        splines=polyline
+        rankdir=TB
+        nodesep=0.55
+        ranksep=0.6
+    ]
+    node [
+        fontname="Courier New"
+        fontcolor="#ffffff"
+        style="filled,rounded"
+        penwidth=2
+        width=3.2
+    ]
+    edge [
+        fontname="Courier New"
+        fontsize=10
+        penwidth=1.8
+    ]
+
+    // ── Legend ────────────────────────────────────────────────
+    subgraph cluster_legend {
+        bgcolor="#0a0a0a"
+        color="#333333"
+        penwidth=1
+        label="Legend"
+        fontcolor="#555555"
+        fontsize=10
+        rank=same
+
+        leg_pass [label="✓  OPEN / PASS"  shape=rectangle fillcolor="#0a2a0a" color="#39ff14" fontcolor="#39ff14" fontsize=10 width=1.8]
+        leg_warn [label="⚠  WARN / WAIT"  shape=rectangle fillcolor="#1a1800" color="#ffff00" fontcolor="#ffff00" fontsize=10 width=1.8]
+        leg_fail [label="✗  CLOSED / FAIL" shape=rectangle fillcolor="#2a0808" color="#ff3300" fontcolor="#ff4444" fontsize=10 width=1.8]
+    }
+
+    // ── Entry ─────────────────────────────────────────────────
+    start [
+        label="sudo tor-relay-verify"
+        shape=oval
+        fillcolor="#14082e"
+        color="#9944ff"
+        fontcolor="#cc88ff"
+        fontsize=13
+        width=3.2
+    ]
+
+    // ── Step 1: IP match ─────────────────────────────────────
+    step1 [
+        label="① External IP\ncurl api.ipify.org\nRead torrc Address"
+        shape=rectangle
+        fillcolor="#0a1228"
+        color="#00aaff"
+        fontsize=11
+    ]
+    ip_match [
+        label="EXT_IP == torrc Address?"
+        shape=diamond
+        fillcolor="#0a1228"
+        color="#00aaff"
+        fontcolor="#44aaff"
+        fontsize=11
+        width=3.4
+    ]
+    ip_warn [
+        label="⚠ IP mismatch\nupdate Address in torrc\nsystemctl reload tor"
+        shape=rectangle
+        fillcolor="#1a1800"
+        color="#ffaa00"
+        fontcolor="#ffaa00"
+        fontsize=10
+        width=3.0
+    ]
+
+    // ── Step 2: port probe ───────────────────────────────────
+    step2 [
+        label="② Hairpin port probe\nPython3 socket.connect_ex\n→ external IP :9001 :9030"
+        shape=rectangle
+        fillcolor="#0d1a0d"
+        color="#ffff00"
+        fontsize=11
+    ]
+    port_check [
+        label="TCP 9001 open?\nTCP 9030 open?"
+        shape=diamond
+        fillcolor="#0d1a0d"
+        color="#ffff00"
+        fontcolor="#ffff00"
+        fontsize=11
+        width=3.4
+    ]
+    port_fail [
+        label="✗ errno=111 ECONNREFUSED\nno port-forward rule\nconfigure router now"
+        shape=rectangle
+        fillcolor="#2a0808"
+        color="#ff3300"
+        fontcolor="#ff4444"
+        fontsize=10
+        width=3.0
+    ]
+    port_ok [
+        label="✓ errno=0  OPEN\nport-forward active"
+        shape=rectangle
+        fillcolor="#0a2a0a"
+        color="#39ff14"
+        fontcolor="#39ff14"
+        fontsize=10
+        width=3.0
+    ]
+
+    // ── Step 3: control port ─────────────────────────────────
+    step3 [
+        label="③ Tor control port\n127.0.0.1:9051\nAUTHENTICATE → GETINFO"
+        shape=rectangle
+        fillcolor="#18081e"
+        color="#ff00ff"
+        fontsize=11
+    ]
+    ctrl_keys [
+        label="status/reachability-succeeded/or\nnet/listeners/or\nfingerprint  ·  address"
+        shape=note
+        fillcolor="#120a16"
+        color="#cc44cc"
+        fontsize=10
+        width=3.6
+    ]
+    ctrl_check [
+        label="reachability-succeeded/or == 1?"
+        shape=diamond
+        fillcolor="#18081e"
+        color="#ff00ff"
+        fontcolor="#ff88ff"
+        fontsize=11
+        width=3.6
+    ]
+    ctrl_pass [
+        label="✓ Tor self-test passed\nIPv4 ORPort confirmed"
+        shape=rectangle
+        fillcolor="#0a2a0a"
+        color="#39ff14"
+        fontcolor="#39ff14"
+        fontsize=10
+        width=3.0
+    ]
+    ctrl_fail [
+        label="✗ self-test pending/failed\ncheck log · allow 20 min"
+        shape=rectangle
+        fillcolor="#2a1000"
+        color="#ff6600"
+        fontcolor="#ff8844"
+        fontsize=10
+        width=3.0
+    ]
+
+    // ── Step 4: log grep ─────────────────────────────────────
+    step4 [
+        label="④ Grep Tor log\n/var/log/tor/notices.log\nreachab | descriptor | ORPort"
+        shape=rectangle
+        fillcolor="#101010"
+        color="#888888"
+        fontsize=11
+    ]
+
+    // ── Step 5: onionoo ──────────────────────────────────────
+    step5 [
+        label="⑤ Onionoo API\nonionoo.torproject.org\n/summary?search=88D420...09C"
+        shape=rectangle
+        fillcolor="#0a1628"
+        color="#4488ff"
+        fontsize=11
+    ]
+    onionoo_check [
+        label="relay visible in consensus?"
+        shape=diamond
+        fillcolor="#0a1628"
+        color="#4488ff"
+        fontcolor="#88aaff"
+        fontsize=11
+        width=3.4
+    ]
+    onionoo_yes [
+        label="✓ VISIBLE\nnickname · running · flags\nrelay is live on network"
+        shape=rectangle
+        fillcolor="#0a2a0a"
+        color="#39ff14"
+        fontcolor="#39ff14"
+        fontsize=10
+        width=3.0
+    ]
+    onionoo_no [
+        label="⚠ NOT in consensus yet\nallow ~1hr after\nself-test passes"
+        shape=rectangle
+        fillcolor="#1a1800"
+        color="#ffff00"
+        fontcolor="#ffff00"
+        fontsize=10
+        width=3.0
+    ]
+
+    // ── Done ─────────────────────────────────────────────────
+    done [
+        label="Done.\noutput → stdout + journald"
+        shape=oval
+        fillcolor="#14082e"
+        color="#9944ff"
+        fontcolor="#cc88ff"
+        fontsize=12
+        width=3.2
+    ]
+
+    // ── Edges ─────────────────────────────────────────────────
+    start   -> step1     [color="#9944ff"]
+
+    step1   -> ip_match  [color="#00aaff"]
+    ip_match -> ip_warn  [xlabel=" mismatch" color="#ffaa00"]
+    ip_match -> step2    [xlabel=" match ✓" color="#00aaff"]
+    ip_warn  -> step2    [color="#ffaa00" style=dashed]
+
+    step2    -> port_check [color="#ffff00"]
+    port_check -> port_fail [xlabel=" closed" color="#ff3300"]
+    port_check -> port_ok   [xlabel=" open ✓" color="#39ff14"]
+    port_fail  -> step3     [color="#888888" style=dashed]
+    port_ok    -> step3     [color="#ffff00"]
+
+    step3    -> ctrl_keys  [color="#cc44cc" style=dashed]
+    step3    -> ctrl_check [color="#ff00ff"]
+    ctrl_check -> ctrl_pass [xlabel=" = 1" color="#39ff14"]
+    ctrl_check -> ctrl_fail [xlabel=" = 0" color="#ff6600"]
+    ctrl_pass  -> step4     [color="#39ff14"]
+    ctrl_fail  -> step4     [color="#888888" style=dashed]
+
+    step4    -> step5        [color="#888888"]
+
+    step5    -> onionoo_check  [color="#4488ff"]
+    onionoo_check -> onionoo_yes [xlabel=" yes" color="#39ff14"]
+    onionoo_check -> onionoo_no  [xlabel=" no"  color="#ffff00"]
+    onionoo_yes -> done [color="#39ff14"]
+    onionoo_no  -> done [color="#ffff00" style=dashed]
+}

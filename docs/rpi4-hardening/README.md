@@ -10,16 +10,31 @@ This document captures everything done to harden the RPi4 that runs the ntp-moni
 
 ## Table of Contents
 
-1. [Host baseline](#host-baseline)
-2. [Tor middle relay](#tor-middle-relay)
-3. [Nyx — Tor relay monitor](#nyx--tor-relay-monitor)
-4. [UFW firewall](#ufw-firewall)
-5. [fail2ban IDS](#fail2ban-ids)
-6. [Boot testing and bugs fixed](#boot-testing-and-bugs-fixed)
-7. [Login MOTD](#login-motd)
-8. [IPv4 port-forward fix (2026-04-26)](#ipv4-port-forward-fix-2026-04-26)
-9. [Lessons learned](#lessons-learned)
-10. [Quick reference](#quick-reference)
+1. [Diagrams](#diagrams)
+2. [Host baseline](#host-baseline)
+3. [Tor middle relay](#tor-middle-relay)
+4. [Nyx — Tor relay monitor](#nyx--tor-relay-monitor)
+5. [UFW firewall](#ufw-firewall)
+6. [fail2ban IDS](#fail2ban-ids)
+7. [Boot testing and bugs fixed](#boot-testing-and-bugs-fixed)
+8. [Login MOTD](#login-motd)
+9. [IPv4 port-forward fix (2026-04-26)](#ipv4-port-forward-fix-2026-04-26)
+10. [Lessons learned](#lessons-learned)
+11. [Quick reference](#quick-reference)
+
+---
+
+## Diagrams
+
+Architecture and flow diagrams — dark background, neon color scheme.
+Full detail in [`diagrams/`](diagrams/).
+
+| | |
+|---|---|
+| ![Network topology](diagrams/01_network_topology.png) | ![Service architecture](diagrams/02_tor_service_arch.png) |
+| **Network Topology** — NAT, IPv4/IPv6, UFW | **Service Architecture** — systemd, ports, tools |
+| ![Boot sequence](diagrams/03_boot_sequence.png) | ![Verify flow](diagrams/04_verify_flow.png) |
+| **Boot Sequence** — clock sync → Tor → verify | **tor-relay-verify** — script logic |
 
 ---
 
