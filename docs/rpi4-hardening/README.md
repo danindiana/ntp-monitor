@@ -17,8 +17,9 @@ This document captures everything done to harden the RPi4 that runs the ntp-moni
 5. [fail2ban IDS](#fail2ban-ids)
 6. [Boot testing and bugs fixed](#boot-testing-and-bugs-fixed)
 7. [Login MOTD](#login-motd)
-8. [Lessons learned](#lessons-learned)
-9. [Quick reference](#quick-reference)
+8. [IPv4 port-forward fix (2026-04-26)](#ipv4-port-forward-fix-2026-04-26)
+9. [Lessons learned](#lessons-learned)
+10. [Quick reference](#quick-reference)
 
 ---
 
@@ -349,6 +350,59 @@ Run manually at any time: `sudo /etc/update-motd.d/50-services`
 
 ---
 
+## IPv4 port-forward fix (2026-04-26)
+
+**Full detail:** [tor-portfwd.md](tor-portfwd.md)
+
+### Problem
+
+After initial setup the relay was not publishing descriptors. The IPv6 ORPort
+`[2600:1700:269:450::44]:9001` passed self-testing immediately, but the IPv4
+ORPort `69.212.112.252:9001` failed every 20-minute check:
+
+```
+[warn] Your server has not managed to confirm reachability for its ORPort(s)
+       at 69.212.112.252:9001. Relays do not publish descriptors until their
+       ORPort(s) are reachable.
+```
+
+Root cause: the ARRIS residential gateway (AT&T, `192.168.1.254`) had no port-forward
+rule for TCP 9001/9030. UPnP is disabled on this gateway — no automated fix possible.
+
+### What was done
+
+| Change | Command / Location |
+|--------|--------------------|
+| Static IP for rpi4 | `nmcli con mod "Wired connection 1" ipv4.method manual …` |
+| Explicit `Address` in torrc | `/etc/tor/torrc` → `Address 69.212.112.252` |
+| Health-check script | `/usr/local/bin/tor-relay-verify` |
+| Boot verification service | `/etc/systemd/system/tor-relay-verify.service` (enabled) |
+
+The static IP ensures the port-forward target never silently drifts. The `Address`
+directive eliminates Tor's startup delay from external IP auto-detection.
+
+### Remaining manual step — router
+
+Log into **http://192.168.1.254** with the Access Code on the router label and add:
+
+| Name | Protocol | Ext Port | Internal IP | Int Port |
+|------|----------|----------|-------------|----------|
+| Tor-ORPort | TCP | 9001 | 192.168.1.165 | 9001 |
+| Tor-DirPort | TCP | 9030 | 192.168.1.165 | 9030 |
+
+After saving, run `sudo tor-relay-verify` on rpi4. Success looks like:
+
+```
+TCP 9001 (ORPort): OPEN
+TCP 9030 (DirPort): OPEN
+reachability-succeeded/or : 1
+Self-testing indicates your ORPort 69.212.112.252:9001 is reachable. Excellent.
+```
+
+Relay appears in onionoo consensus ~1 hour after the self-test passes.
+
+---
+
 ## Lessons learned
 
 ### 1. Always reboot-test after configuring services
@@ -374,6 +428,32 @@ The Debian Trixie default fail2ban `banaction` is `nftables`. Both `nftables` an
 
 If a package's postinstall script creates a directory that may not survive across reinstalls or system image snapshots, mirror it in `/etc/tmpfiles.d/`. The format is simple and the mechanism is reliable: `systemd-tmpfiles-setup.service` runs before any services start.
 
+### 6. IPv6 passes, IPv4 fails → suspect NAT before anything else
+
+If Tor (or any service) passes IPv6 reachability but fails IPv4, the cause is almost always NAT — not UFW, not the service config, not a firewall on the host. IPv6 is typically routed natively by residential ISPs; IPv4 requires explicit port forwarding. Check `upnpc -l` first; if UPnP is disabled, you need the router admin UI.
+
+### 7. Lock in a static IP before adding port-forward rules
+
+A port-forward pointing at a DHCP-assigned IP will silently break if the lease ever changes. Before adding router port-forwards, convert the target host to a static IP (or add a DHCP reservation by MAC). On NetworkManager this is one `nmcli con mod` command; the IP does not have to change, so the SSH session stays up.
+
+### 8. Tor control port: no banner — client writes first
+
+Tor's control port does not send a banner. Any code that calls `recv()` before `AUTHENTICATE` will hang on a timeout. Always write first:
+
+```python
+s.connect(("127.0.0.1", 9051))
+s.sendall(b'AUTHENTICATE "password"\r\n')
+time.sleep(0.2)
+resp = s.recv(1024)
+```
+
+The most useful keys for relay health: `status/reachability-succeeded/or` (0/1),
+`net/listeners/or`, `fingerprint`, `address`.
+
+### 9. Hairpin NAT is a cheap external port-check
+
+To test whether a port is open from outside without needing an external host, connect from the LAN machine to its own external IP. If the router supports hairpin NAT (most do), you get a real probe result. `errno=0` → open; `errno=111` (ECONNREFUSED) → not forwarded; `errno=110` (ETIMEDOUT) → silently dropped.
+
 ---
 
 ## Quick reference
@@ -393,12 +473,23 @@ ssh rpi4 sudo fail2ban-client status sshd
 ssh rpi4 sudo journalctl -u tor@default -f
 ssh rpi4 sudo tail -f /var/log/tor/notices.log
 
+# Tor relay full health check (port forward, control port, onionoo)
+ssh rpi4 sudo tor-relay-verify
+
+# Boot verification service result (runs 5 min after Tor starts)
+ssh rpi4 sudo journalctl -u tor-relay-verify --no-pager
+
 # Clock / time sync
 ssh rpi4 timedatectl
 ssh rpi4 systemctl is-active time-sync.target
 
 # Service wall
 ssh rpi4 sudo /etc/update-motd.d/50-services
+
+# Update torrc Address if ISP changes external IP
+ssh rpi4 "NEW_IP=\$(curl -s https://api.ipify.org) && \
+  sudo sed -i \"s/^Address .*/Address \$NEW_IP/\" /etc/tor/torrc && \
+  sudo systemctl reload tor@default && echo done"
 
 # Relay tracker (appears ~3h after first boot, Stable flag ~8 days)
 # https://metrics.torproject.org/rs.html#search/warlockrpi4
